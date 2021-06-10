@@ -32,4 +32,8 @@ add_custom_target(
 
 add_executable(Z_DUMMY_TARGET ${SRC_LIST})
 
-include_directories(".pio/libdeps/uno/DHT sensor library")
+include_directories(
+        ".pio/libdeps/uno/DHT sensor library"
+        ".pio/libdeps/uno/ArduinoSTL/src"
+        ".pio/libdeps/uno/LiquidCrystal/src"
+)
