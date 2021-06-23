@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <DHT.h>
-#include <LiquidCrystal.h>
 #include <SoftwareSerial.h>
+#include <MsTimer2.h>
+#include "LCDMenu.h"
 
 #define ESP_SERIAL_SPEED 9600
 #define PC_SERIAL_SPEED 9600
@@ -37,11 +38,23 @@
 DHT dht11Outside(DHT11_OUTSIDE_PIN, DHT11);
 DHT dht11Inside(DHT11_INSIDE_PIN, DHT11);
 
-LiquidCrystal lcd(LCD_RS_PIN, LCD_ENABLE_PIN, LCD_D4_PIN, LCD_D5_PIN, LCD_D6_PIN, LCD_D7_PIN);
+LCDMenu lcdMenu(LCD_RS_PIN, LCD_ENABLE_PIN, LCD_D4_PIN, LCD_D5_PIN, LCD_D6_PIN, LCD_D7_PIN);
 
 SoftwareSerial espSerial(ESP_SERIAL_RX_PIN, ESP_SERIAL_TX_PIN);
 
-void setup() {
+struct ESPTime {
+    uint32_t tm_sec;
+    uint32_t tm_min;
+    uint32_t tm_hour;
+    uint32_t tm_mday;
+    uint32_t tm_mon;
+    uint32_t tm_year;
+    uint32_t tm_wday;
+    uint32_t tm_yday;
+    uint32_t tm_isdst;
+};
+
+void initPinMode() {
     pinMode(BOX_LID_PIN, INPUT_PULLUP);
 
     pinMode(SWITCH_SELECT_PIN, INPUT_PULLUP);
@@ -53,82 +66,108 @@ void setup() {
     pinMode(ULTRAVIOLET_RAYS_PIN, OUTPUT);
 
     pinMode(FAN_DRIVE_PIN, OUTPUT);
+}
 
+void initDHT11() {
     dht11Outside.begin();
     dht11Inside.begin();
+}
 
-    lcd.begin(LCD_COLS, LCD_LINES);
-
+void initSerial() {
     espSerial.begin(ESP_SERIAL_SPEED);
-
     Serial.begin(PC_SERIAL_SPEED);
 }
 
-void loop() {
-    Serial.println("=======================================");
+volatile bool leftPushed = false, rightPushed = false, upPushed = false, downPushed = false,
+        selectPushed = false;
 
-    Serial.print("[Box lid: ");
-    Serial.print(digitalRead(BOX_LID_PIN));
-    Serial.println("]");
-
-    Serial.print("[Select: ");
-    Serial.print(digitalRead(SWITCH_SELECT_PIN));
-    Serial.print(", Right: ");
-    Serial.print(digitalRead(SWITCH_RIGHT_PIN));
-    Serial.print(", Left: ");
-    Serial.print(digitalRead(SWITCH_LEFT_PIN));
-    Serial.print(", Up: ");
-    Serial.print(digitalRead(SWITCH_UP_PIN));
-    Serial.print(", Down: ");
-    Serial.print(digitalRead(SWITCH_DOWN_PIN));
-    Serial.println("]");
-
-    Serial.print("[DHT11 Out[ Temp: ");
-    Serial.print(dht11Outside.readTemperature());
-    Serial.print(", Humi: ");
-    Serial.print((int) dht11Outside.readHumidity());
-    Serial.print("] In[ Temp: ");
-    Serial.print(dht11Inside.readTemperature());
-    Serial.print(", Humi: ");
-    Serial.print((int) dht11Inside.readHumidity());
-    Serial.println("]]");
-
-    static bool is_ultraviolet_led_on = false;
-    is_ultraviolet_led_on = !is_ultraviolet_led_on;
-    Serial.print("[Ultraviolet LED: ");
-    if (is_ultraviolet_led_on) {
-        digitalWrite(ULTRAVIOLET_RAYS_PIN, HIGH);
-        Serial.println("ON]");
-    } else {
-        digitalWrite(ULTRAVIOLET_RAYS_PIN, LOW);
-
-        Serial.println("OFF]");
+ISR(PCINT0_vect) {
+    if (digitalRead(SWITCH_LEFT_PIN) == LOW && !leftPushed) {
+        leftPushed = true;
+        interrupts();
+        lcdMenu.operation(OperationType::Left);
+        delayMicroseconds(30000);
+        while (digitalRead(SWITCH_LEFT_PIN) == LOW);
+        delayMicroseconds(30000);
+        leftPushed = false;
+    } else if (digitalRead(SWITCH_RIGHT_PIN) == LOW && !rightPushed) {
+        rightPushed = true;
+        interrupts();
+        lcdMenu.operation(OperationType::Right);
+        delayMicroseconds(30000);
+        while (digitalRead(SWITCH_RIGHT_PIN) == LOW);
+        delayMicroseconds(30000);
+        rightPushed = false;
+    } else if (digitalRead(SWITCH_SELECT_PIN) == LOW && !selectPushed) {
+        selectPushed = true;
+        interrupts();
+        lcdMenu.operation(OperationType::Select);
+        delayMicroseconds(30000);
+        while (digitalRead(SWITCH_SELECT_PIN) == LOW);
+        delayMicroseconds(30000);
+        selectPushed = false;
+    } else if (digitalRead(SWITCH_UP_PIN) == LOW && !upPushed) {
+        upPushed = true;
+        interrupts();
+        lcdMenu.operation(OperationType::Up);
+        delayMicroseconds(30000);
+        while (digitalRead(SWITCH_UP_PIN) == LOW);
+        delayMicroseconds(30000);
+        upPushed = false;
+    } else if (digitalRead(SWITCH_DOWN_PIN) == LOW && !downPushed) {
+        downPushed = true;
+        interrupts();
+        lcdMenu.operation(OperationType::Down);
+        delayMicroseconds(30000);
+        while (digitalRead(SWITCH_DOWN_PIN) == LOW);
+        delayMicroseconds(30000);
+        downPushed = false;
     }
+}
 
-    static bool is_fan_drive = false;
-    is_fan_drive = !is_fan_drive;
-    Serial.print("[FAN: ");
-    if (is_fan_drive) {
-        digitalWrite(FAN_DRIVE_PIN, HIGH);
-        Serial.println("ON]");
-    } else {
-        digitalWrite(FAN_DRIVE_PIN, LOW);
+void initInterrupt() {
+    PCICR |= 1 << PCIE0;
+    PCMSK0 |= 0b11111;
+}
 
-        Serial.println("OFF]");
-    }
-
+void readEspTime(ESPTime *espTime) {
     espSerial.write(1);
     while (espSerial.available() <= 0);
-    String currentTime = espSerial.readString();
-    Serial.print("[ESP-8266: [Current time: ");
-    Serial.print(currentTime);
-    Serial.println("]]");
+    espSerial.readBytes((char *) espTime, sizeof(ESPTime));
+}
 
-    lcd.setCursor(0, 0);
-    lcd.print(currentTime);
+ESPTime time{};
 
-    Serial.println("=======================================");
-    Serial.println();
+void updateSecond() {
+    interrupts();
+    if (++time.tm_sec >= 60) {
+        time.tm_sec = 0;
+        if (++time.tm_min >= 60)
+            readEspTime(&time);
+        lcdMenu.setTime(time.tm_hour, time.tm_min);
+        lcdMenu.update();
+    }
+}
 
-    delay(2100);
+void setup() {
+    initPinMode();
+    initDHT11();
+    initSerial();
+
+    lcdMenu.printStartMessage();
+
+    readEspTime(&time);
+
+    lcdMenu.setTime(time.tm_hour, time.tm_min);
+    lcdMenu.setWeather(WeatherType::Rain);
+    lcdMenu.begin();
+
+    MsTimer2::set(1000, updateSecond);
+    MsTimer2::start();
+
+    initInterrupt();
+}
+
+void loop() {
+
 }

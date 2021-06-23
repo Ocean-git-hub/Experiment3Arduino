@@ -36,4 +36,7 @@ include_directories(
         ".pio/libdeps/uno/DHT sensor library"
         ".pio/libdeps/uno/ArduinoSTL/src"
         ".pio/libdeps/uno/LiquidCrystal/src"
+        ".pio/libdeps/uno/MsTimer2"
+        "lib/LCDMenu/src"
+        "lib/OperationQueue/src"
 )
