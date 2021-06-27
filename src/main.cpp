@@ -2,6 +2,7 @@
 #include <DHT.h>
 #include <SoftwareSerial.h>
 #include <MsTimer2.h>
+#include <TimeAlarms.h>
 #include "LCDMenu.h"
 
 #define ESP_SERIAL_SPEED 9600
@@ -31,9 +32,13 @@
 #define ESP_SERIAL_RX_PIN 5
 #define ESP_SERIAL_TX_PIN 4
 
-#define ULTRAVIOLET_RAYS_PIN 3
+#define ULTRAVIOLET_RAYS_LED_DRIVE_PIN 3
 
 #define FAN_DRIVE_PIN 2
+
+#define CHATTERING_DELAY 10000
+
+volatile bool isSwitchPushed = false;
 
 DHT dht11Outside(DHT11_OUTSIDE_PIN, DHT11);
 DHT dht11Inside(DHT11_INSIDE_PIN, DHT11);
@@ -63,7 +68,7 @@ void initPinMode() {
     pinMode(SWITCH_UP_PIN, INPUT_PULLUP);
     pinMode(SWITCH_DOWN_PIN, INPUT_PULLUP);
 
-    pinMode(ULTRAVIOLET_RAYS_PIN, OUTPUT);
+    pinMode(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, OUTPUT);
 
     pinMode(FAN_DRIVE_PIN, OUTPUT);
 }
@@ -78,75 +83,123 @@ void initSerial() {
     Serial.begin(PC_SERIAL_SPEED);
 }
 
-volatile bool leftPushed = false, rightPushed = false, upPushed = false, downPushed = false,
-        selectPushed = false;
+AlarmId ultravioletDriveTimer, ultravioletRayTimer;
+
+void offUltraviolet() {
+    digitalWrite(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, LOW);
+    lcdMenu.clearStatus(2);
+    lcdMenu.update();
+}
+
+void driveUltraviolet() {
+    digitalWrite(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, HIGH);
+    Alarm.free(ultravioletRayTimer);
+    Alarm.timerOnce(11, 0, 0, offUltraviolet);
+    lcdMenu.setStatus(2);
+    lcdMenu.update();
+}
+
+volatile uint8_t isBoxLidOpen;
 
 ISR(PCINT0_vect) {
-    if (digitalRead(SWITCH_LEFT_PIN) == LOW && !leftPushed) {
-        leftPushed = true;
-        interrupts();
-        lcdMenu.operation(OperationType::Left);
-        delayMicroseconds(30000);
-        while (digitalRead(SWITCH_LEFT_PIN) == LOW);
-        delayMicroseconds(30000);
-        leftPushed = false;
-    } else if (digitalRead(SWITCH_RIGHT_PIN) == LOW && !rightPushed) {
-        rightPushed = true;
-        interrupts();
-        lcdMenu.operation(OperationType::Right);
-        delayMicroseconds(30000);
-        while (digitalRead(SWITCH_RIGHT_PIN) == LOW);
-        delayMicroseconds(30000);
-        rightPushed = false;
-    } else if (digitalRead(SWITCH_SELECT_PIN) == LOW && !selectPushed) {
-        selectPushed = true;
-        interrupts();
-        lcdMenu.operation(OperationType::Select);
-        delayMicroseconds(30000);
-        while (digitalRead(SWITCH_SELECT_PIN) == LOW);
-        delayMicroseconds(30000);
-        selectPushed = false;
-    } else if (digitalRead(SWITCH_UP_PIN) == LOW && !upPushed) {
-        upPushed = true;
-        interrupts();
-        lcdMenu.operation(OperationType::Up);
-        delayMicroseconds(30000);
-        while (digitalRead(SWITCH_UP_PIN) == LOW);
-        delayMicroseconds(30000);
-        upPushed = false;
-    } else if (digitalRead(SWITCH_DOWN_PIN) == LOW && !downPushed) {
-        downPushed = true;
-        interrupts();
-        lcdMenu.operation(OperationType::Down);
-        delayMicroseconds(30000);
-        while (digitalRead(SWITCH_DOWN_PIN) == LOW);
-        delayMicroseconds(30000);
-        downPushed = false;
+    uint8_t isBoxOpening = digitalRead(BOX_LID_PIN) == LOW ? 0 : 1;
+
+    if ((isBoxLidOpen ^ isBoxOpening) == 1) {
+        offUltraviolet();
+        Alarm.free(ultravioletDriveTimer);
+        if (isBoxLidOpen && !isBoxOpening) {
+            lcdMenu.setStatus(1);
+            ultravioletDriveTimer = Alarm.timerOnce(5, driveUltraviolet);
+        } else
+            lcdMenu.clearStatus(1);
+        isBoxLidOpen = isBoxOpening;
+        lcdMenu.update();
+    }
+
+    if (!isSwitchPushed) {
+        int pushedSwitchPin = -1;
+        if (digitalRead(SWITCH_RIGHT_PIN) == LOW)
+            pushedSwitchPin = SWITCH_RIGHT_PIN;
+        else if (digitalRead(SWITCH_LEFT_PIN) == LOW)
+            pushedSwitchPin = SWITCH_LEFT_PIN;
+        else if (digitalRead(SWITCH_SELECT_PIN) == LOW)
+            pushedSwitchPin = SWITCH_SELECT_PIN;
+        else if (digitalRead(SWITCH_UP_PIN) == LOW)
+            pushedSwitchPin = SWITCH_UP_PIN;
+        else if (digitalRead(SWITCH_DOWN_PIN) == LOW)
+            pushedSwitchPin = SWITCH_DOWN_PIN;
+
+        if (pushedSwitchPin != -1) {
+            isSwitchPushed = true;
+            interrupts();
+            switch (pushedSwitchPin) {
+                case SWITCH_RIGHT_PIN:
+                    lcdMenu.operation(OperationType::Right);
+                    break;
+                case SWITCH_LEFT_PIN:
+                    lcdMenu.operation(OperationType::Left);
+                    break;
+                case SWITCH_UP_PIN:
+                    lcdMenu.operation(OperationType::Up);
+                    break;
+                case SWITCH_DOWN_PIN:
+                    lcdMenu.operation(OperationType::Down);
+                    break;
+                case SWITCH_SELECT_PIN:
+                    lcdMenu.operation(OperationType::Select);
+                    break;
+                default:;
+            }
+            delayMicroseconds(CHATTERING_DELAY);
+            while (digitalRead(pushedSwitchPin) == LOW);
+            delayMicroseconds(CHATTERING_DELAY);
+            isSwitchPushed = false;
+        }
     }
 }
 
 void initInterrupt() {
     PCICR |= 1 << PCIE0;
-    PCMSK0 |= 0b11111;
-}
-
-void readEspTime(ESPTime *espTime) {
-    espSerial.write(1);
-    while (espSerial.available() <= 0);
-    espSerial.readBytes((char *) espTime, sizeof(ESPTime));
+    PCMSK0 |= 0b111111;
 }
 
 ESPTime time{};
 
+void readEspTime() {
+//    espSerial.write(1);
+//    while (espSerial.available() <= 0);
+//    espSerial.readBytes((char *) &time, sizeof(ESPTime));
+    setTime(time.tm_hour, time.tm_min, time.tm_sec, time.tm_mday, time.tm_mon, time.tm_year % 100);
+}
+
 void updateSecond() {
     interrupts();
-    if (++time.tm_sec >= 60) {
-        time.tm_sec = 0;
-        if (++time.tm_min >= 60)
-            readEspTime(&time);
-        lcdMenu.setTime(time.tm_hour, time.tm_min);
-        lcdMenu.update();
+    Alarm.delay(0);
+}
+
+void updateLcdTime() {
+    lcdMenu.setTime(hour(), minute());
+    lcdMenu.update();
+}
+
+int volumetricHumidity(float temp, float humidity) {
+    return 6.1078 * pow(10, 7.5 * temp / (temp + 237.3)) * 217 / (temp + 273.15) * humidity / 100 + 0.5;
+}
+
+void updateDHT() {
+    if (volumetricHumidity(dht11Inside.readTemperature(), dht11Inside.readHumidity())
+        - volumetricHumidity(dht11Outside.readTemperature(), dht11Outside.readHumidity()) >= 3) {
+        digitalWrite(FAN_DRIVE_PIN, HIGH);
+        lcdMenu.setStatus(0);
+    } else {
+        digitalWrite(FAN_DRIVE_PIN, LOW);
+        lcdMenu.clearStatus(0);
     }
+    lcdMenu.update();
+}
+
+void decreaseDay() {
+    lcdMenu.decreaseLifeTime();
 }
 
 void setup() {
@@ -154,16 +207,23 @@ void setup() {
     initDHT11();
     initSerial();
 
+    isBoxLidOpen = digitalRead(BOX_LID_PIN) == LOW ? 0 : 1;
+
     lcdMenu.printStartMessage();
 
-    readEspTime(&time);
+    readEspTime();
 
-    lcdMenu.setTime(time.tm_hour, time.tm_min);
+    lcdMenu.setTime(hour(), minute());
     lcdMenu.setWeather(WeatherType::Rain);
     lcdMenu.begin();
 
     MsTimer2::set(1000, updateSecond);
     MsTimer2::start();
+
+    Alarm.timerRepeat(60, updateLcdTime);
+    Alarm.timerRepeat(1, 0, 0, readEspTime);
+    Alarm.timerRepeat(2, updateDHT);
+    Alarm.timerRepeat(0, 0, 1, decreaseDay);
 
     initInterrupt();
 }

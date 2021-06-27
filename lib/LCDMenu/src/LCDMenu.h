@@ -77,13 +77,17 @@ public:
 
     void setWeather(WeatherType weatherType);
 
-    void setStatus(uint8_t fourBits);
+    void setStatus(uint8_t statusNum);
 
-    void decreaseLifeTime(uint8_t day);
+    uint8_t getStatus();
+
+    void decreaseLifeTime();
 
     void update();
 
     void operation(OperationType operationType);
+
+    void clearStatus(uint8_t statusNum);
 };
 
 #endif //ARDUINO_PROJECT_LCDMENU_H

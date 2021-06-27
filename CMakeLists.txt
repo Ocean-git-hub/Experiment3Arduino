@@ -37,6 +37,8 @@ include_directories(
         ".pio/libdeps/uno/ArduinoSTL/src"
         ".pio/libdeps/uno/LiquidCrystal/src"
         ".pio/libdeps/uno/MsTimer2"
+        ".pio/libdeps/uno/TimeAlarms"
+        ".pio/libdeps/uno/Time"
         "lib/LCDMenu/src"
         "lib/OperationQueue/src"
 )

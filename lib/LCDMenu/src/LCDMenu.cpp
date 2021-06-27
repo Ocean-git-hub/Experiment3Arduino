@@ -44,13 +44,13 @@ void LCDMenu::init() {
             0b00100,
     };
     uint8_t ret[8] = {
-            0b00000,
-            0b00000,
             0b11111,
             0b00001,
-            0b01001,
+            0b00101,
+            0b01101,
             0b11111,
-            0b01000,
+            0b01100,
+            0b00100,
     };
     lcd.createChar(LCD_CHARACTER_CAVITY_SQUARE, square);
     lcd.createChar(LCD_CHARACTER_DOWN, down);
@@ -107,8 +107,14 @@ void LCDMenu::printWeather() {
     }
 }
 
-void LCDMenu::setStatus(uint8_t fourBits) {
-    statusFiveBits = fourBits & 0b1111;
+void LCDMenu::setStatus(uint8_t statusNum) {
+    if (statusNum < 4)
+        statusFiveBits |= 1 << statusNum;
+}
+
+void LCDMenu::clearStatus(uint8_t statusNum) {
+    if (statusNum < 4)
+        statusFiveBits &= ~(1 << statusNum);
 }
 
 void LCDMenu::printStatus() {
@@ -129,10 +135,12 @@ void LCDMenu::printMenu() {
 }
 
 void LCDMenu::update() {
-    clearLine(0);
-    printTime();
-    printWeather();
-    printStatus();
+    if (menuType == SelectMenu) {
+        clearLine(0);
+        printTime();
+        printWeather();
+        printStatus();
+    }
 }
 
 void LCDMenu::clearLine(unsigned char line) {
@@ -203,7 +211,7 @@ void LCDMenu::printLifeTime() {
 void LCDMenu::setLifeTime(OperationType operationType) {
     switch (operationType) {
         case Up:
-            if (lifeTimeDay < 254)
+            if (lifeTimeDay < 255)
                 lifeTimeDay++;
             break;
         case Down:
@@ -231,13 +239,11 @@ void LCDMenu::setLifeTime(OperationType operationType) {
     lcd.write(LCD_CHARACTER_RETURN);
 }
 
-void LCDMenu::decreaseLifeTime(uint8_t day) {
-    if (lifeTimeDay > day)
-        lifeTimeDay -= day;
-    else {
-        lifeTimeDay = 0;
+void LCDMenu::decreaseLifeTime() {
+    if (lifeTimeDay > 0)
+        lifeTimeDay--;
+    if (lifeTimeDay == 0)
         statusFiveBits |= 1 << 4;
-    }
 }
 
 void LCDMenu::resetLifeTime() {
@@ -262,4 +268,8 @@ void LCDMenu::operationInMenu(OperationType operationType) {
             resetLifeTime();
             break;
     }
+}
+
+uint8_t LCDMenu::getStatus() {
+    return statusFiveBits;
 }
