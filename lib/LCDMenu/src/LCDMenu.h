@@ -9,7 +9,8 @@ enum WeatherType {
     Sun,
     Cloud,
     Rain,
-    Snow
+    Snow,
+    Other
 };
 
 enum OperationType {
@@ -36,9 +37,9 @@ class LCDMenu {
     };
     unsigned char defaultLifeTimeDay = 0;
     unsigned char lifeTimeDay = 0;
-    MenuType menuType = SelectMenu;
-    WeatherType weather = Sun;
-    uint8_t statusFiveBits = 0;
+    MenuType menuType = MenuType::SelectMenu;
+    WeatherType weather = WeatherType::Other;
+    uint8_t statusFiveBits = 1 << 4;
     uint8_t hour = 0;
     uint8_t min = 0;
 
@@ -71,15 +72,13 @@ public:
 
     void begin();
 
-    void printStartMessage();
+    bool print(const char *str);
 
     void setTime(uint8_t currentHour, uint8_t currentMin);
 
     void setWeather(WeatherType weatherType);
 
     void setStatus(uint8_t statusNum);
-
-    uint8_t getStatus();
 
     void decreaseLifeTime();
 

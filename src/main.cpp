@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <DHT.h>
 #include <SoftwareSerial.h>
-#include <MsTimer2.h>
 #include <TimeAlarms.h>
+#include <avr/sleep.h>
 #include "LCDMenu.h"
 
 #define ESP_SERIAL_SPEED 9600
@@ -38,14 +38,17 @@
 
 #define CHATTERING_DELAY 10000
 
-volatile bool isSwitchPushed = false;
-
 DHT dht11Outside(DHT11_OUTSIDE_PIN, DHT11);
 DHT dht11Inside(DHT11_INSIDE_PIN, DHT11);
 
 LCDMenu lcdMenu(LCD_RS_PIN, LCD_ENABLE_PIN, LCD_D4_PIN, LCD_D5_PIN, LCD_D6_PIN, LCD_D7_PIN);
 
 SoftwareSerial espSerial(ESP_SERIAL_RX_PIN, ESP_SERIAL_TX_PIN);
+
+volatile bool isSwitchPushed = false;
+volatile WeatherType weather;
+volatile uint8_t isBoxLidOpen;
+AlarmId ultravioletDriveTimer, ultravioletRayTimer;
 
 struct ESPTime {
     uint32_t tm_sec;
@@ -57,7 +60,7 @@ struct ESPTime {
     uint32_t tm_wday;
     uint32_t tm_yday;
     uint32_t tm_isdst;
-};
+} time;
 
 void initPinMode() {
     pinMode(BOX_LID_PIN, INPUT_PULLUP);
@@ -83,8 +86,6 @@ void initSerial() {
     Serial.begin(PC_SERIAL_SPEED);
 }
 
-AlarmId ultravioletDriveTimer, ultravioletRayTimer;
-
 void offUltraviolet() {
     digitalWrite(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, LOW);
     lcdMenu.clearStatus(2);
@@ -98,8 +99,6 @@ void driveUltraviolet() {
     lcdMenu.setStatus(2);
     lcdMenu.update();
 }
-
-volatile uint8_t isBoxLidOpen;
 
 ISR(PCINT0_vect) {
     uint8_t isBoxOpening = digitalRead(BOX_LID_PIN) == LOW ? 0 : 1;
@@ -163,18 +162,11 @@ void initInterrupt() {
     PCMSK0 |= 0b111111;
 }
 
-ESPTime time{};
-
 void readEspTime() {
-//    espSerial.write(1);
-//    while (espSerial.available() <= 0);
-//    espSerial.readBytes((char *) &time, sizeof(ESPTime));
+    espSerial.write(1);
+    while (espSerial.available() <= 0);
+    espSerial.readBytes((char *) &time, sizeof(ESPTime));
     setTime(time.tm_hour, time.tm_min, time.tm_sec, time.tm_mday, time.tm_mon, time.tm_year % 100);
-}
-
-void updateSecond() {
-    interrupts();
-    Alarm.delay(0);
 }
 
 void updateLcdTime() {
@@ -202,6 +194,28 @@ void decreaseDay() {
     lcdMenu.decreaseLifeTime();
 }
 
+void getEspWeather() {
+    espSerial.write(2);
+    while (espSerial.available() <= 0);
+    String weatherStr = espSerial.readString();
+    if (weatherStr.compareTo("Sun") == 0)
+        weather = WeatherType::Sun;
+    else if (weatherStr.compareTo("Clouds") == 0)
+        weather = WeatherType::Cloud;
+    else if (weatherStr.compareTo("Rain") == 0)
+        weather = WeatherType::Rain;
+    else if (weatherStr.compareTo("Snow") == 0)
+        weather = WeatherType::Snow;
+    else
+        weather = WeatherType::Other;
+    Serial.println(weatherStr);
+}
+
+ISR(TIMER2_COMPA_vect) {
+    interrupts();
+    Alarm.delay(0);
+}
+
 void setup() {
     initPinMode();
     initDHT11();
@@ -209,25 +223,31 @@ void setup() {
 
     isBoxLidOpen = digitalRead(BOX_LID_PIN) == LOW ? 0 : 1;
 
-    lcdMenu.printStartMessage();
+    lcdMenu.print("Initialized");
 
     readEspTime();
+    getEspWeather();
 
     lcdMenu.setTime(hour(), minute());
-    lcdMenu.setWeather(WeatherType::Rain);
+    lcdMenu.setWeather(weather);
     lcdMenu.begin();
-
-    MsTimer2::set(1000, updateSecond);
-    MsTimer2::start();
 
     Alarm.timerRepeat(60, updateLcdTime);
     Alarm.timerRepeat(1, 0, 0, readEspTime);
     Alarm.timerRepeat(2, updateDHT);
-    Alarm.timerRepeat(0, 0, 1, decreaseDay);
+    Alarm.timerRepeat(24, 0, 0, decreaseDay);
+
+    TCCR2A |= 1 << WGM21;
+    TCCR2B |= 1 << CS22 | 1 << CS21 | 1 << CS20;
+    OCR2A = 255;
+    TIMSK2 |= 1 << OCIE2A;
+
+    set_sleep_mode(SLEEP_MODE_PWR_SAVE);
+    delay(150);
 
     initInterrupt();
 }
 
 void loop() {
-
+    sleep_mode();
 }

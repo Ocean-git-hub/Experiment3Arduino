@@ -39,6 +39,7 @@ include_directories(
         ".pio/libdeps/uno/MsTimer2"
         ".pio/libdeps/uno/TimeAlarms"
         ".pio/libdeps/uno/Time"
+        ".pio/libdeps/uno/TimerOne"
         "lib/LCDMenu/src"
         "lib/OperationQueue/src"
 )

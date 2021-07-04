@@ -16,7 +16,6 @@
 #define LCD_CHARACTER_DOWN 2
 #define LCD_CHARACTER_RETURN 3
 
-
 LCDMenu::LCDMenu(uint8_t rs, uint8_t enable, uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3)
         : lcd(rs, enable, d0, d1, d2, d3) {
     init();
@@ -55,7 +54,6 @@ void LCDMenu::init() {
     lcd.createChar(LCD_CHARACTER_CAVITY_SQUARE, square);
     lcd.createChar(LCD_CHARACTER_DOWN, down);
     lcd.createChar(LCD_CHARACTER_RETURN, ret);
-    statusFiveBits |= 1 << 4;
 }
 
 void LCDMenu::begin() {
@@ -66,9 +64,14 @@ void LCDMenu::begin() {
     printMenu();
 }
 
-void LCDMenu::printStartMessage() {
-    lcd.setCursor(0, 0);
-    lcd.print("Initialized");
+bool LCDMenu::print(const char *str) {
+    if (strlen(str) <= LCD_COLS) {
+        clearLine(0);
+        lcd.setCursor(0, 0);
+        lcd.print(str);
+        return true;
+    }
+    return false;
 }
 
 void LCDMenu::setTime(uint8_t currentHour, uint8_t currentMin) {
@@ -104,6 +107,9 @@ void LCDMenu::printWeather() {
         case Snow:
             lcd.print("Snow");
             break;
+        default:
+            lcd.print("Unk.");
+            break;
     }
 }
 
@@ -135,8 +141,7 @@ void LCDMenu::printMenu() {
 }
 
 void LCDMenu::update() {
-    if (menuType == SelectMenu) {
-        clearLine(0);
+    if (menuType == MenuType::SelectMenu) {
         printTime();
         printWeather();
         printStatus();
@@ -153,15 +158,15 @@ void LCDMenu::clearLine(unsigned char line) {
 
 void LCDMenu::operation(OperationType operationType) {
     switch (menuType) {
-        case SelectMenu:
+        case MenuType::SelectMenu:
             switch (operationType) {
-                case Right:
+                case OperationType::Right:
                     nextMenu();
                     break;
-                case Left:
+                case OperationType::Left:
                     previousMenu();
                     break;
-                case Select:
+                case OperationType::Select:
                     menuType = SelectedMenu;
                     operation(OperationType::None);
                     break;
@@ -169,12 +174,15 @@ void LCDMenu::operation(OperationType operationType) {
                     break;
             }
             break;
-        case SelectedMenu:
+        case MenuType::SelectedMenu:
             switch (operationType) {
-                case Select:
+                case OperationType::Select:
                     menuType = SelectMenu;
                     operationInMenu(operationType);
-                    update();
+                    lcd.clear();
+                    printTime();
+                    printWeather();
+                    printStatus();
                     printMenu();
                     break;
                 default:
@@ -233,7 +241,7 @@ void LCDMenu::setLifeTime(OperationType operationType) {
     char buffer[17] = {};
     sprintf(buffer, "Set: %7ddays", lifeTimeDay);
     lcd.print(buffer);
-    lcd.setCursor(13, 1);
+    lcd.setCursor(LCD_COLS - 3, 1);
     lcd.print("^");
     lcd.write(LCD_CHARACTER_DOWN);
     lcd.write(LCD_CHARACTER_RETURN);
@@ -268,8 +276,4 @@ void LCDMenu::operationInMenu(OperationType operationType) {
             resetLifeTime();
             break;
     }
-}
-
-uint8_t LCDMenu::getStatus() {
-    return statusFiveBits;
 }
