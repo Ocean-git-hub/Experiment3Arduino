@@ -47,7 +47,7 @@ SoftwareSerial espSerial(ESP_SERIAL_RX_PIN, ESP_SERIAL_TX_PIN);
 
 volatile bool isSwitchPushed = false;
 volatile WeatherType weather;
-volatile uint8_t isBoxLidOpen;
+volatile uint8_t isBoxLidOpen = 1;
 AlarmId ultravioletDriveTimer, ultravioletRayTimer;
 
 struct ESPTime {
@@ -175,19 +175,29 @@ void updateLcdTime() {
 }
 
 int volumetricHumidity(float temp, float humidity) {
-    return 6.1078 * pow(10, 7.5 * temp / (temp + 237.3)) * 217 / (temp + 273.15) * humidity / 100 + 0.5;
+    return 6.11 * pow(10, 7.5 * temp / (temp + 237.3)) * 217 / (temp + 273.15) * humidity / 100 + 0.5;
 }
 
+void disableFan() {
+    digitalWrite(FAN_DRIVE_PIN, LOW);
+    lcdMenu.clearStatus(0);
+}
+
+AlarmId fanAlarm;
+
 void updateDHT() {
-    if (volumetricHumidity(dht11Inside.readTemperature(), dht11Inside.readHumidity())
-        - volumetricHumidity(dht11Outside.readTemperature(), dht11Outside.readHumidity()) >= 3) {
+    int out = volumetricHumidity(dht11Outside.readTemperature(), dht11Outside.readHumidity());
+    int in = volumetricHumidity(dht11Inside.readTemperature(), dht11Inside.readHumidity());
+    Serial.print(out);
+    Serial.print(", ");
+    Serial.println(in);
+    if (out - in >= 3) {
         digitalWrite(FAN_DRIVE_PIN, HIGH);
         lcdMenu.setStatus(0);
-    } else {
-        digitalWrite(FAN_DRIVE_PIN, LOW);
-        lcdMenu.clearStatus(0);
+        Alarm.free(fanAlarm);
+        fanAlarm = Alarm.timerOnce(30, disableFan);
+        lcdMenu.update();
     }
-    lcdMenu.update();
 }
 
 void decreaseDay() {
@@ -208,7 +218,6 @@ void getEspWeather() {
         weather = WeatherType::Snow;
     else
         weather = WeatherType::Other;
-    Serial.println(weatherStr);
 }
 
 ISR(TIMER2_COMPA_vect) {
@@ -220,8 +229,6 @@ void setup() {
     initPinMode();
     initDHT11();
     initSerial();
-
-    isBoxLidOpen = digitalRead(BOX_LID_PIN) == LOW ? 0 : 1;
 
     lcdMenu.print("Initialized");
 
@@ -242,12 +249,8 @@ void setup() {
     OCR2A = 255;
     TIMSK2 |= 1 << OCIE2A;
 
-    set_sleep_mode(SLEEP_MODE_PWR_SAVE);
-    delay(150);
-
     initInterrupt();
 }
 
 void loop() {
-    sleep_mode();
 }
