@@ -2,11 +2,9 @@
 #include <DHT.h>
 #include <SoftwareSerial.h>
 #include <TimeAlarms.h>
-#include <avr/sleep.h>
 #include "LCDMenu.h"
 
 #define ESP_SERIAL_SPEED 9600
-#define PC_SERIAL_SPEED 9600
 
 #define LCD_COLS 16
 #define LCD_LINES 2
@@ -26,8 +24,8 @@
 #define SWITCH_UP_PIN 9
 #define SWITCH_DOWN_PIN 8
 
-#define DHT11_OUTSIDE_PIN 7
-#define DHT11_INSIDE_PIN 6
+#define DHT11_OUTSIDE_PIN 6
+#define DHT11_INSIDE_PIN 7
 
 #define ESP_SERIAL_RX_PIN 5
 #define ESP_SERIAL_TX_PIN 4
@@ -36,7 +34,13 @@
 
 #define FAN_DRIVE_PIN 2
 
-#define CHATTERING_DELAY 10000
+#define CHATTERING_DELAY_MICRO 10000
+
+enum LCDStatusNum {
+    FanDrive = 0,
+    BoxLid,
+    UltravioletLEDDrive,
+};
 
 DHT dht11Outside(DHT11_OUTSIDE_PIN, DHT11);
 DHT dht11Inside(DHT11_INSIDE_PIN, DHT11);
@@ -48,7 +52,9 @@ SoftwareSerial espSerial(ESP_SERIAL_RX_PIN, ESP_SERIAL_TX_PIN);
 volatile bool isSwitchPushed = false;
 volatile WeatherType weather;
 volatile uint8_t isBoxLidOpen = 1;
-AlarmId ultravioletDriveTimer, ultravioletRayTimer;
+AlarmId ultravioletDriveTimer = dtINVALID_ALARM_ID,
+        ultravioletRayTimer = dtINVALID_ALARM_ID,
+        fanAlarm = dtINVALID_ALARM_ID;
 
 struct ESPTime {
     uint32_t tm_sec;
@@ -83,20 +89,19 @@ void initDHT11() {
 
 void initSerial() {
     espSerial.begin(ESP_SERIAL_SPEED);
-    Serial.begin(PC_SERIAL_SPEED);
 }
 
 void offUltraviolet() {
     digitalWrite(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, LOW);
-    lcdMenu.clearStatus(2);
+    lcdMenu.clearStatus(LCDStatusNum::UltravioletLEDDrive);
     lcdMenu.update();
 }
 
 void driveUltraviolet() {
     digitalWrite(ULTRAVIOLET_RAYS_LED_DRIVE_PIN, HIGH);
     Alarm.free(ultravioletRayTimer);
-    Alarm.timerOnce(11, 0, 0, offUltraviolet);
-    lcdMenu.setStatus(2);
+    ultravioletRayTimer = Alarm.timerOnce(0, 130, 0, offUltraviolet);
+    lcdMenu.setStatus(LCDStatusNum::UltravioletLEDDrive);
     lcdMenu.update();
 }
 
@@ -107,10 +112,10 @@ ISR(PCINT0_vect) {
         offUltraviolet();
         Alarm.free(ultravioletDriveTimer);
         if (isBoxLidOpen && !isBoxOpening) {
-            lcdMenu.setStatus(1);
+            lcdMenu.setStatus(LCDStatusNum::BoxLid);
             ultravioletDriveTimer = Alarm.timerOnce(5, driveUltraviolet);
         } else
-            lcdMenu.clearStatus(1);
+            lcdMenu.clearStatus(LCDStatusNum::BoxLid);
         isBoxLidOpen = isBoxOpening;
         lcdMenu.update();
     }
@@ -149,9 +154,9 @@ ISR(PCINT0_vect) {
                     break;
                 default:;
             }
-            delayMicroseconds(CHATTERING_DELAY);
+            delayMicroseconds(CHATTERING_DELAY_MICRO);
             while (digitalRead(pushedSwitchPin) == LOW);
-            delayMicroseconds(CHATTERING_DELAY);
+            delayMicroseconds(CHATTERING_DELAY_MICRO);
             isSwitchPushed = false;
         }
     }
@@ -180,20 +185,15 @@ int volumetricHumidity(float temp, float humidity) {
 
 void disableFan() {
     digitalWrite(FAN_DRIVE_PIN, LOW);
-    lcdMenu.clearStatus(0);
+    lcdMenu.clearStatus(LCDStatusNum::FanDrive);
+    lcdMenu.update();
 }
 
-AlarmId fanAlarm;
-
 void updateDHT() {
-    int out = volumetricHumidity(dht11Outside.readTemperature(), dht11Outside.readHumidity());
-    int in = volumetricHumidity(dht11Inside.readTemperature(), dht11Inside.readHumidity());
-    Serial.print(out);
-    Serial.print(", ");
-    Serial.println(in);
-    if (out - in >= 3) {
+    if (volumetricHumidity(dht11Inside.readTemperature(), dht11Inside.readHumidity())
+        - volumetricHumidity(dht11Outside.readTemperature(), dht11Outside.readHumidity()) >= 3) {
         digitalWrite(FAN_DRIVE_PIN, HIGH);
-        lcdMenu.setStatus(0);
+        lcdMenu.setStatus(LCDStatusNum::FanDrive);
         Alarm.free(fanAlarm);
         fanAlarm = Alarm.timerOnce(30, disableFan);
         lcdMenu.update();
@@ -208,13 +208,13 @@ void getEspWeather() {
     espSerial.write(2);
     while (espSerial.available() <= 0);
     String weatherStr = espSerial.readString();
-    if (weatherStr.compareTo("Sun") == 0)
+    if (weatherStr == "Sun")
         weather = WeatherType::Sun;
-    else if (weatherStr.compareTo("Clouds") == 0)
+    else if (weatherStr == "Clouds")
         weather = WeatherType::Cloud;
-    else if (weatherStr.compareTo("Rain") == 0)
+    else if (weatherStr == "Rain")
         weather = WeatherType::Rain;
-    else if (weatherStr.compareTo("Snow") == 0)
+    else if (weatherStr == "Snow")
         weather = WeatherType::Snow;
     else
         weather = WeatherType::Other;
@@ -239,9 +239,9 @@ void setup() {
     lcdMenu.setWeather(weather);
     lcdMenu.begin();
 
-    Alarm.timerRepeat(60, updateLcdTime);
-    Alarm.timerRepeat(1, 0, 0, readEspTime);
+    Alarm.timerRepeat(10, updateLcdTime);
     Alarm.timerRepeat(2, updateDHT);
+    Alarm.timerRepeat(1, 0, 0, readEspTime);
     Alarm.timerRepeat(24, 0, 0, decreaseDay);
 
     TCCR2A |= 1 << WGM21;
